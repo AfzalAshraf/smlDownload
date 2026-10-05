@@ -278,6 +278,23 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertTrue(any(t.startswith("smalldownloader") for t in titles),
                         "window title should mention the app: %r" % titles)
 
+    def test_custom_theme_toggle_sorting_and_pointer_cursors(self):
+        app = self.make_app()
+        self.assertEqual(app.theme_name, "light")
+        self.assertIn(app.start_button._kwargs.get("cursor"), ("hand2", "pointinghand"))
+        self.assertEqual(app.url_text._kwargs.get("cursor"), "xterm")
+
+        app._toggle_theme()
+        self.assertEqual(app.theme_name, "dark")
+        self.assertEqual(app.theme_button._data.get("text"), "Light theme")
+        self.assertIn("dark appearance", app.log_text._data.get("text", ""))
+
+        app._sort_by("name")
+        self.assertEqual(app._sort_column, "name")
+        self.assertFalse(app._sort_reverse)
+        app._sort_by("name")
+        self.assertTrue(app._sort_reverse)
+
     def test_add_start_and_render_a_real_download(self):
         app = self.make_app()
         url = self.server.url("file", "gui.bin", size=2 * 1024 * 1024)
