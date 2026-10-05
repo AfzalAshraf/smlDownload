@@ -43,6 +43,9 @@ from .core import (
 
 POLL_MS = 300
 
+# A restrained, system-font-friendly palette: light is the first-run default,
+# while the built-in dark appearance keeps the same contrast and hierarchy.
+# The window chrome and application menus remain native to the host OS.
 BG = "#14161a"
 PANEL = "#1c1f26"
 PANEL_2 = "#22262f"
@@ -55,6 +58,43 @@ GREEN = "#4ade80"
 RED = "#f87171"
 YELLOW = "#fbbf24"
 BLUE = "#60a5fa"
+
+THEMES = {
+    "light": {
+        "bg": "#f3f5f9",
+        "card": "#ffffff",
+        "field": "#f8f9fc",
+        "border": "#dce2eb",
+        "text": "#1c2434",
+        "muted": "#697586",
+        "accent": "#2563eb",
+        "accent_hover": "#1d4ed8",
+        "selection": "#dbeafe",
+        "green": "#15803d",
+        "red": "#b42318",
+        "yellow": "#a15c07",
+        "blue": "#2563eb",
+        "white": "#ffffff",
+        "disabled": "#a7b0bf",
+    },
+    "dark": {
+        "bg": "#101722",
+        "card": "#182232",
+        "field": "#111c2b",
+        "border": "#2a394d",
+        "text": "#e8eef7",
+        "muted": "#94a3b8",
+        "accent": "#4f8df7",
+        "accent_hover": "#6aa0ff",
+        "selection": "#2b4162",
+        "green": "#4ade80",
+        "red": "#f87171",
+        "yellow": "#fbbf24",
+        "blue": "#7db1ff",
+        "white": "#ffffff",
+        "disabled": "#66758a",
+    },
+}
 
 STATE_COLORS = {
     PENDING: MUTED,
@@ -123,9 +163,14 @@ def app_class():
         def __init__(self, urls: Optional[List[str]] = None, outdir: Optional[str] = None) -> None:
             super().__init__()
             self.title("smalldownloader %s" % __version__)
-            self.geometry("1080x720")
-            self.minsize(880, 560)
-            self.configure(bg=BG)
+            self.geometry("1120x760")
+            self.minsize(880, 600)
+            self.theme_name = "light"
+            self.colors = dict(THEMES[self.theme_name])
+            self._hand_cursor = "pointinghand" if sys.platform == "darwin" else "hand2"
+            self._modifier = "Command" if sys.platform == "darwin" else "Control"
+            self._shortcut_name = "⌘" if sys.platform == "darwin" else "Ctrl"
+            self.configure(bg=self.colors["bg"])
             self.protocol("WM_DELETE_WINDOW", self._on_close)
 
             self.manager = DownloadManager(
@@ -135,72 +180,153 @@ def app_class():
             )
             self._rows: Dict[int, str] = {}
             self._last_state: Dict[int, str] = {}
+            self._progress_by_id = {}
+            self._sort_column = None
+            self._sort_reverse = False
+            self._empty_state_visible = None
             self._closing = False
 
             self._build_style()
             self._build_menu()
             self._build_widgets()
+            self._bind_shortcuts()
 
             for url in urls or []:
                 self.url_text.insert("end", url + "\n")
+            self.url_text.focus_set()
             self._poll()
-            self._log("smalldownloader %s - ready. Paste links, then press Start." % __version__)
+            self._log("smalldownloader %s is ready. Add a link, then start your downloads."
+                      % __version__)
 
         # ------------------------------------------------------------------ #
         # construction
         # ------------------------------------------------------------------ #
 
         def _build_style(self) -> None:
+            """Install a crisp, native-feeling palette using only built-in ttk."""
+            c = self.colors
             style = ttk.Style(self)
             try:
                 style.theme_use("clam")
             except tk.TclError:
                 pass
-            style.configure(".", background=BG, foreground=FG, fieldbackground=PANEL_2,
-                            bordercolor=BORDER, focuscolor=ACCENT, darkcolor=PANEL,
-                            lightcolor=PANEL, troughcolor=PANEL_2)
-            style.configure("TFrame", background=BG)
-            style.configure("Panel.TFrame", background=PANEL)
-            style.configure("TLabel", background=BG, foreground=FG)
-            style.configure("Muted.TLabel", background=BG, foreground=MUTED)
-            style.configure("Panel.TLabel", background=PANEL, foreground=FG)
-            style.configure("Head.TLabel", background=BG, foreground=FG,
-                            font=(self._ui_font(), 15, "bold"))
-            style.configure("TButton", background=PANEL_2, foreground=FG, borderwidth=1,
-                            focusthickness=0, padding=(10, 6))
+
+            ui_font = self._ui_font()
+            mono_font = self._mono_font()
+            style.configure(".", background=c["bg"], foreground=c["text"],
+                            fieldbackground=c["field"], bordercolor=c["border"],
+                            focuscolor=c["accent"], darkcolor=c["border"],
+                            lightcolor=c["card"], troughcolor=c["field"],
+                            font=(ui_font, 10))
+            style.configure("TFrame", background=c["bg"])
+            style.configure("App.TFrame", background=c["bg"])
+            style.configure("Card.TFrame", background=c["card"], borderwidth=1,
+                            bordercolor=c["border"], relief="solid", padding=0)
+            style.configure("CardInner.TFrame", background=c["card"])
+            style.configure("Empty.TFrame", background=c["card"])
+            style.configure("TLabel", background=c["bg"], foreground=c["text"],
+                            font=(ui_font, 10))
+            style.configure("Card.TLabel", background=c["card"], foreground=c["text"])
+            style.configure("Muted.TLabel", background=c["bg"], foreground=c["muted"])
+            style.configure("CardMuted.TLabel", background=c["card"], foreground=c["muted"])
+            style.configure("Eyebrow.TLabel", background=c["card"], foreground=c["muted"],
+                            font=(ui_font, 8, "bold"))
+            style.configure("BrandMark.TLabel", background=c["accent"], foreground=c["white"],
+                            font=(ui_font, 17, "bold"), padding=(9, 4))
+            style.configure("Head.TLabel", background=c["bg"], foreground=c["text"],
+                            font=(ui_font, 17, "bold"))
+            style.configure("Subhead.TLabel", background=c["bg"], foreground=c["muted"],
+                            font=(ui_font, 9))
+            style.configure("Section.TLabel", background=c["card"], foreground=c["text"],
+                            font=(ui_font, 12, "bold"))
+            style.configure("StatValue.TLabel", background=c["card"], foreground=c["text"],
+                            font=(ui_font, 15, "bold"))
+            style.configure("StatCaption.TLabel", background=c["card"], foreground=c["muted"],
+                            font=(ui_font, 8, "bold"))
+            style.configure("EmptyTitle.TLabel", background=c["card"], foreground=c["text"],
+                            font=(ui_font, 12, "bold"))
+            style.configure("EmptyCopy.TLabel", background=c["card"], foreground=c["muted"],
+                            font=(ui_font, 9))
+            style.configure("Ready.TLabel", background=c["bg"], foreground=c["green"],
+                            font=(ui_font, 9, "bold"))
+            style.configure("ActiveStatus.TLabel", background=c["bg"], foreground=c["blue"],
+                            font=(ui_font, 9, "bold"))
+            style.configure("WarningStatus.TLabel", background=c["bg"], foreground=c["yellow"],
+                            font=(ui_font, 9, "bold"))
+            style.configure("ErrorStatus.TLabel", background=c["bg"], foreground=c["red"],
+                            font=(ui_font, 9, "bold"))
+            style.configure("Footer.TLabel", background=c["bg"], foreground=c["muted"],
+                            font=(ui_font, 8))
+
+            style.configure("TButton", background=c["field"], foreground=c["text"],
+                            borderwidth=1, bordercolor=c["border"], focusthickness=2,
+                            focuscolor=c["accent"], padding=(11, 7), font=(ui_font, 9, "bold"))
             style.map("TButton",
-                      background=[("active", BORDER), ("disabled", PANEL)],
-                      foreground=[("disabled", MUTED)])
-            style.configure("Accent.TButton", background=ACCENT, foreground="#ffffff")
-            style.map("Accent.TButton",
-                      background=[("active", ACCENT_HOVER), ("disabled", "#2b3a52")],
-                      foreground=[("disabled", "#9aa6bd")])
-            style.configure("TEntry", fieldbackground=PANEL_2, foreground=FG,
-                            insertcolor=FG, bordercolor=BORDER, padding=6)
-            style.configure("TSpinbox", fieldbackground=PANEL_2, foreground=FG,
-                            arrowcolor=FG, bordercolor=BORDER, padding=4)
-            style.configure("TCheckbutton", background=BG, foreground=FG,
-                            focuscolor=BG, indicatorcolor=PANEL_2)
-            style.map("TCheckbutton", background=[("active", BG)])
-            style.configure("Treeview", background=PANEL, fieldbackground=PANEL, foreground=FG,
-                            rowheight=26, borderwidth=0, font=(self._mono_font(), 10))
-            style.configure("Treeview.Heading", background=PANEL_2, foreground=MUTED,
-                            relief="flat", font=(self._ui_font(), 10, "bold"))
-            style.map("Treeview.Heading", background=[("active", BORDER)])
-            style.map("Treeview", background=[("selected", "#2b3a52")],
-                      foreground=[("selected", "#ffffff")])
-            style.configure("TNotebook", background=BG, borderwidth=0)
-            style.configure("TNotebook.Tab", background=PANEL, foreground=MUTED, padding=(14, 7))
-            style.map("TNotebook.Tab", background=[("selected", PANEL_2)],
-                      foreground=[("selected", FG)])
-            style.configure("TProgressbar", background=ACCENT, troughcolor=PANEL_2, borderwidth=0)
+                      background=[("disabled", c["bg"]), ("pressed", c["selection"]),
+                                  ("active", c["selection"])],
+                      foreground=[("disabled", c["disabled"])])
+            style.configure("Primary.TButton", background=c["accent"], foreground=c["white"],
+                            borderwidth=0, padding=(14, 8), font=(ui_font, 9, "bold"))
+            style.map("Primary.TButton",
+                      background=[("disabled", c["disabled"]), ("pressed", c["accent_hover"]),
+                                  ("active", c["accent_hover"])],
+                      foreground=[("disabled", c["white"])])
+            style.configure("Secondary.TButton", background=c["card"], foreground=c["text"],
+                            borderwidth=1, bordercolor=c["border"], padding=(11, 7))
+            style.map("Secondary.TButton",
+                      background=[("disabled", c["bg"]), ("active", c["selection"])],
+                      foreground=[("disabled", c["disabled"])])
+            style.configure("Quiet.TButton", background=c["bg"], foreground=c["muted"],
+                            borderwidth=0, padding=(9, 6))
+            style.map("Quiet.TButton", background=[("active", c["selection"])],
+                      foreground=[("active", c["text"])])
+            style.configure("Small.TButton", background=c["card"], foreground=c["muted"],
+                            borderwidth=0, padding=(7, 4), font=(ui_font, 8, "bold"))
+            style.map("Small.TButton", background=[("active", c["selection"])],
+                      foreground=[("active", c["text"])])
+            style.configure("TEntry", fieldbackground=c["field"], foreground=c["text"],
+                            insertcolor=c["text"], bordercolor=c["border"], padding=(9, 7))
+            style.map("TEntry", bordercolor=[("focus", c["accent"])])
+            style.configure("TSpinbox", fieldbackground=c["field"], foreground=c["text"],
+                            arrowcolor=c["muted"], bordercolor=c["border"], padding=(5, 5))
+            style.configure("Treeview", background=c["card"], fieldbackground=c["card"],
+                            foreground=c["text"], rowheight=31, borderwidth=0,
+                            font=(mono_font, 9))
+            style.configure("Treeview.Heading", background=c["field"], foreground=c["muted"],
+                            relief="flat", borderwidth=0, padding=(9, 8),
+                            font=(ui_font, 8, "bold"))
+            style.map("Treeview.Heading", background=[("active", c["selection"])])
+            style.map("Treeview", background=[("selected", c["selection"])],
+                      foreground=[("selected", c["text"])])
+            style.configure("TNotebook", background=c["card"], borderwidth=0,
+                            tabmargins=(0, 0, 0, 0))
+            style.configure("TNotebook.Tab", background=c["field"], foreground=c["muted"],
+                            padding=(13, 7), font=(ui_font, 8, "bold"))
+            style.map("TNotebook.Tab", background=[("selected", c["card"])],
+                      foreground=[("selected", c["text"])])
+            style.configure("Vertical.TScrollbar", background=c["field"],
+                            troughcolor=c["card"], bordercolor=c["card"], arrowcolor=c["muted"])
+            style.configure("Horizontal.TScrollbar", background=c["field"],
+                            troughcolor=c["card"], bordercolor=c["card"], arrowcolor=c["muted"])
+            style.configure("TProgressbar", background=c["accent"], troughcolor=c["field"],
+                            borderwidth=0)
+
+            self._state_colors = {
+                PENDING: c["muted"],
+                RUNNING: c["blue"],
+                PAUSED: c["yellow"],
+                DONE: c["green"],
+                ERROR: c["red"],
+                CANCELLED: c["muted"],
+            }
 
         def _ui_font(self) -> str:
-            return self._pick_font(("Segoe UI", "Helvetica Neue", "DejaVu Sans", "Arial"))
+            return self._pick_font(("Segoe UI", "SF Pro Text", "Helvetica Neue",
+                                    "DejaVu Sans", "Arial"))
 
         def _mono_font(self) -> str:
-            return self._pick_font(("Consolas", "DejaVu Sans Mono", "Menlo", "Courier New",
-                                   "Courier"))
+            return self._pick_font(("Cascadia Code", "Consolas", "Menlo",
+                                    "DejaVu Sans Mono", "Courier New", "Courier"))
 
         def _pick_font(self, candidates) -> str:
             try:
@@ -212,19 +338,49 @@ def app_class():
                     return name
             return "TkDefaultFont"
 
+        def _menu_options(self) -> dict:
+            c = self.colors
+            return {
+                "bg": c["card"],
+                "fg": c["text"],
+                "activebackground": c["selection"],
+                "activeforeground": c["text"],
+                "disabledforeground": c["muted"],
+                "bd": 0,
+                "tearoff": 0,
+            }
+
+        def _make_menu(self, parent):
+            try:
+                menu = tk.Menu(parent, **self._menu_options())
+            except tk.TclError:  # Aqua may keep menu colours under system control.
+                menu = tk.Menu(parent, tearoff=0)
+            self._menus.append(menu)
+            return menu
+
         def _build_menu(self) -> None:
-            menubar = tk.Menu(self, tearoff=0)
-            file_menu = tk.Menu(menubar, tearoff=0)
-            file_menu.add_command(label="Add URLs from file…", command=self._add_from_file)
-            file_menu.add_command(label="Import from browser cURL…", command=self._open_curl_dialog)
+            self._menus = []
+            mod = self._shortcut_name
+            menubar = self._make_menu(self)
+            file_menu = self._make_menu(menubar)
+            file_menu.add_command(label="Add URLs from file…", accelerator="%s+O" % mod,
+                                  command=self._add_from_file)
+            file_menu.add_command(label="Import from browser cURL…",
+                                  accelerator="%s+Shift+O" % mod,
+                                  command=self._open_curl_dialog)
             file_menu.add_separator()
             file_menu.add_command(label="Choose download folder…", command=self._browse_dir)
             file_menu.add_separator()
-            file_menu.add_command(label="Quit", command=self._on_close)
+            file_menu.add_command(label="Quit", accelerator="%s+Q" % mod,
+                                  command=self._on_close)
             menubar.add_cascade(label="File", menu=file_menu)
 
-            queue_menu = tk.Menu(menubar, tearoff=0)
-            queue_menu.add_command(label="Start", command=self._start)
+            queue_menu = self._make_menu(menubar)
+            queue_menu.add_command(label="Start downloads", accelerator="F5",
+                                   command=self._start)
+            queue_menu.add_command(label="Add links to queue",
+                                   accelerator="%s+Return" % mod, command=self._add_urls)
+            queue_menu.add_separator()
             queue_menu.add_command(label="Pause all", command=self._pause)
             queue_menu.add_command(label="Resume all", command=self._resume)
             queue_menu.add_command(label="Cancel all", command=self._cancel)
@@ -233,149 +389,357 @@ def app_class():
             queue_menu.add_command(label="Remove finished", command=self._clear_finished)
             menubar.add_cascade(label="Queue", menu=queue_menu)
 
-            help_menu = tk.Menu(menubar, tearoff=0)
-            help_menu.add_command(label="About", command=self._about)
+            view_menu = self._make_menu(menubar)
+            view_menu.add_command(label="Toggle light / dark appearance",
+                                   command=self._toggle_theme)
+            menubar.add_cascade(label="View", menu=view_menu)
+
+            help_menu = self._make_menu(menubar)
+            help_menu.add_command(label="About smalldownloader", command=self._about)
             menubar.add_cascade(label="Help", menu=help_menu)
             self.configure(menu=menubar)
 
         def _build_widgets(self) -> None:
-            self.grid_rowconfigure(2, weight=3)
-            self.grid_rowconfigure(3, weight=2)
+            c = self.colors
             self.grid_columnconfigure(0, weight=1)
+            self.grid_rowconfigure(4, weight=1, minsize=150)
 
-            # -- header ---------------------------------------------------- #
-            header = ttk.Frame(self, style="TFrame")
-            header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 6))
-            header.grid_columnconfigure(1, weight=1)
+            # -- brand bar -------------------------------------------------- #
+            header = ttk.Frame(self, style="App.TFrame")
+            header.grid(row=0, column=0, sticky="ew", padx=18, pady=(13, 7))
+            header.grid_columnconfigure(2, weight=1)
+            ttk.Label(header, text="S", style="BrandMark.TLabel", anchor="center",
+                      width=2).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 11))
             ttk.Label(header, text="smalldownloader", style="Head.TLabel").grid(
-                row=0, column=0, sticky="w")
-            self.status_label = ttk.Label(header, text="idle", style="Muted.TLabel")
-            self.status_label.grid(row=0, column=1, sticky="e")
+                row=0, column=1, sticky="sw")
+            ttk.Label(header, text="Reliable downloads, made simple.",
+                      style="Subhead.TLabel").grid(row=1, column=1, sticky="nw", pady=(1, 0))
+            self.status_label = ttk.Label(header, text="●  Ready", style="Ready.TLabel")
+            self.status_label.grid(row=0, column=3, rowspan=2, sticky="e", padx=(8, 12))
+            self.theme_button = self._button(
+                header, "Dark theme", self._toggle_theme, style="Quiet.TButton")
+            self.theme_button.grid(row=0, column=4, rowspan=2, sticky="e")
 
-            # -- settings bar ---------------------------------------------- #
-            settings = ttk.Frame(self, style="Panel.TFrame")
-            settings.grid(row=1, column=0, sticky="ew", padx=16, pady=6)
+            # -- at-a-glance metrics --------------------------------------- #
+            stats = ttk.Frame(self, style="App.TFrame")
+            stats.grid(row=1, column=0, sticky="ew", padx=18, pady=5)
+            for column in range(4):
+                stats.grid_columnconfigure(column, weight=1, uniform="stats")
+            self.stat_vars = {
+                "active": tk.StringVar(value="0"),
+                "queued": tk.StringVar(value="0"),
+                "completed": tk.StringVar(value="0"),
+                "speed": tk.StringVar(value="0 B/s"),
+            }
+            stat_specs = (
+                ("active", "DOWNLOADING"),
+                ("queued", "WAITING"),
+                ("completed", "COMPLETED"),
+                ("speed", "TRANSFER RATE"),
+            )
+            for index, (key, caption) in enumerate(stat_specs):
+                card = ttk.Frame(stats, style="Card.TFrame", padding=(13, 8))
+                card.grid(row=0, column=index, sticky="ew",
+                          padx=(0 if index == 0 else 5, 0 if index == 3 else 5))
+                ttk.Label(card, text=caption, style="StatCaption.TLabel").pack(anchor="w")
+                ttk.Label(card, textvariable=self.stat_vars[key], style="StatValue.TLabel").pack(
+                    anchor="w", pady=(2, 0))
+
+            # -- destination and performance settings ---------------------- #
+            settings = ttk.Frame(self, style="Card.TFrame", padding=(13, 9))
+            settings.grid(row=2, column=0, sticky="ew", padx=18, pady=5)
             settings.grid_columnconfigure(1, weight=1)
-
-            ttk.Label(settings, text="Save to", style="Panel.TLabel").grid(
-                row=0, column=0, padx=(12, 8), pady=10)
+            ttk.Label(settings, text="SAVE TO", style="Eyebrow.TLabel").grid(
+                row=0, column=0, sticky="w", padx=(0, 9))
             self.dir_var = tk.StringVar(value=self.manager.outdir)
-            dir_entry = ttk.Entry(settings, textvariable=self.dir_var)
-            dir_entry.grid(row=0, column=1, sticky="ew", pady=10)
-            ttk.Button(settings, text="Browse…", command=self._browse_dir).grid(
-                row=0, column=2, padx=8, pady=10)
+            self.dir_entry = ttk.Entry(settings, textvariable=self.dir_var, cursor="xterm")
+            self.dir_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+            self._button(settings, "Browse…", self._browse_dir,
+                         style="Secondary.TButton").grid(row=0, column=2, padx=(0, 16))
 
-            ttk.Label(settings, text="Connections", style="Panel.TLabel").grid(
-                row=1, column=0, padx=(12, 8), pady=(0, 10), sticky="w")
+            ttk.Label(settings, text="CONNECTIONS / FILE", style="Eyebrow.TLabel").grid(
+                row=0, column=3, sticky="w", padx=(0, 7))
             self.conn_var = tk.StringVar(value="4")
-            ttk.Spinbox(settings, from_=1, to=32, width=5, textvariable=self.conn_var).grid(
-                row=1, column=1, sticky="w", pady=(0, 10))
+            ttk.Spinbox(settings, from_=1, to=32, width=4, textvariable=self.conn_var,
+                        cursor="xterm").grid(row=0, column=4, sticky="w", padx=(0, 16))
 
-            right = ttk.Frame(settings, style="Panel.TFrame")
-            right.grid(row=1, column=2, sticky="e", padx=8, pady=(0, 10))
-            ttk.Label(right, text="Files at once", style="Panel.TLabel").pack(side="left", padx=(0, 6))
+            ttk.Label(settings, text="FILES AT ONCE", style="Eyebrow.TLabel").grid(
+                row=0, column=5, sticky="w", padx=(0, 7))
             self.jobs_var = tk.StringVar(value="2")
-            ttk.Spinbox(right, from_=1, to=16, width=5, textvariable=self.jobs_var).pack(side="left")
+            ttk.Spinbox(settings, from_=1, to=16, width=4, textvariable=self.jobs_var,
+                        cursor="xterm").grid(row=0, column=6, sticky="w")
 
-            # -- URL box --------------------------------------------------- #
-            body = ttk.Frame(self, style="TFrame")
-            body.grid(row=2, column=0, sticky="nsew", padx=16, pady=6)
-            body.grid_rowconfigure(2, weight=1)
-            body.grid_columnconfigure(0, weight=1)
+            # -- new-download composer ------------------------------------- #
+            composer = ttk.Frame(self, style="Card.TFrame", padding=(13, 10))
+            composer.grid(row=3, column=0, sticky="ew", padx=18, pady=5)
+            composer.grid_columnconfigure(0, weight=1)
+            ttk.Label(composer, text="Add downloads", style="Section.TLabel").grid(
+                row=0, column=0, sticky="sw")
+            ttk.Label(
+                composer, text="Paste direct links — one per line. Multiple links are welcome.",
+                style="CardMuted.TLabel",
+            ).grid(row=1, column=0, sticky="nw", pady=(1, 0))
+            self._button(composer, "Import cURL…", self._open_curl_dialog,
+                         style="Quiet.TButton").grid(row=0, column=1, rowspan=2, sticky="ne")
 
-            input_row = ttk.Frame(body, style="TFrame")
-            input_row.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-            input_row.grid_columnconfigure(0, weight=1)
-            self.url_text = tk.Text(input_row, height=3, bg=PANEL_2, fg=FG, insertbackground=FG,
-                                    relief="flat", highlightthickness=1, highlightbackground=BORDER,
-                                    highlightcolor=ACCENT, wrap="none", font=(self._mono_font(), 10),
-                                    padx=8, pady=6)
+            url_input = ttk.Frame(composer, style="CardInner.TFrame")
+            url_input.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(9, 7))
+            url_input.grid_columnconfigure(0, weight=1)
+            self.url_text = tk.Text(
+                url_input, height=3, bg=c["field"], fg=c["text"],
+                insertbackground=c["text"], selectbackground=c["selection"],
+                selectforeground=c["text"], relief="flat", highlightthickness=1,
+                highlightbackground=c["border"], highlightcolor=c["accent"],
+                wrap="char", font=(self._mono_font(), 10), padx=10, pady=7,
+                cursor="xterm", undo=True,
+            )
             self.url_text.grid(row=0, column=0, sticky="ew")
-            url_scroll = ttk.Scrollbar(input_row, orient="vertical", command=self.url_text.yview)
+            url_scroll = ttk.Scrollbar(url_input, orient="vertical", command=self.url_text.yview,
+                                       style="Vertical.TScrollbar")
             url_scroll.grid(row=0, column=1, sticky="ns")
             self.url_text.configure(yscrollcommand=url_scroll.set)
 
-            button_row = ttk.Frame(body, style="TFrame")
-            button_row.grid(row=1, column=0, sticky="ew", pady=(4, 8))
-            ttk.Button(button_row, text="Add to queue", command=self._add_urls).pack(side="left")
-            ttk.Button(button_row, text="Import cURL…", command=self._open_curl_dialog).pack(
-                side="left", padx=6)
-            ttk.Button(button_row, text="Start", style="Accent.TButton",
-                       command=self._start).pack(side="left", padx=(18, 6))
-            ttk.Button(button_row, text="Pause", command=self._pause).pack(side="left", padx=6)
-            ttk.Button(button_row, text="Resume", command=self._resume).pack(side="left", padx=6)
-            ttk.Button(button_row, text="Cancel", command=self._cancel).pack(side="left", padx=6)
-            ttk.Button(button_row, text="Retry failed", command=self._retry_failed).pack(
-                side="left", padx=(18, 6))
-            ttk.Button(button_row, text="Remove finished", command=self._clear_finished).pack(
-                side="left", padx=6)
+            ttk.Label(
+                composer,
+                text="%s+Enter to add  ·  %s+Shift+Enter to start" % (
+                    self._shortcut_name, self._shortcut_name),
+                style="CardMuted.TLabel",
+            ).grid(row=3, column=0, sticky="w")
+            composer_actions = ttk.Frame(composer, style="CardInner.TFrame")
+            composer_actions.grid(row=3, column=1, sticky="e")
+            self.paste_button = self._button(composer_actions, "Paste", self._paste_urls,
+                                             style="Quiet.TButton")
+            self.paste_button.pack(side="left", padx=(0, 2))
+            self.add_button = self._button(composer_actions, "Add to queue", self._add_urls,
+                                           style="Secondary.TButton")
+            self.add_button.pack(side="left", padx=(2, 6))
+            self.start_button = self._button(composer_actions, "Start downloads", self._start,
+                                             style="Primary.TButton")
+            self.start_button.pack(side="left")
 
-            # -- table ----------------------------------------------------- #
-            table_wrap = ttk.Frame(body, style="TFrame")
-            table_wrap.grid(row=2, column=0, sticky="nsew")
+            # -- queue and bulk controls ----------------------------------- #
+            queue_panel = ttk.Frame(self, style="Card.TFrame", padding=(11, 8))
+            queue_panel.grid(row=4, column=0, sticky="nsew", padx=18, pady=5)
+            queue_panel.grid_columnconfigure(0, weight=1)
+            queue_panel.grid_rowconfigure(1, weight=1)
+            queue_header = ttk.Frame(queue_panel, style="CardInner.TFrame")
+            queue_header.grid(row=0, column=0, sticky="ew")
+            queue_header.grid_columnconfigure(1, weight=1)
+            ttk.Label(queue_header, text="Download queue", style="Section.TLabel").grid(
+                row=0, column=0, sticky="w")
+            self.queue_count_var = tk.StringVar(value="0 downloads")
+            ttk.Label(queue_header, textvariable=self.queue_count_var,
+                      style="CardMuted.TLabel").grid(row=0, column=1, sticky="w", padx=(9, 0))
+            bulk_actions = ttk.Frame(queue_header, style="CardInner.TFrame")
+            bulk_actions.grid(row=0, column=2, sticky="e")
+            self.pause_button = self._button(bulk_actions, "Pause", self._pause,
+                                             style="Small.TButton")
+            self.pause_button.pack(side="left", padx=1)
+            self.resume_button = self._button(bulk_actions, "Resume", self._resume,
+                                              style="Small.TButton")
+            self.resume_button.pack(side="left", padx=1)
+            self.cancel_button = self._button(bulk_actions, "Cancel all", self._cancel,
+                                              style="Small.TButton")
+            self.cancel_button.pack(side="left", padx=1)
+            self.retry_button = self._button(bulk_actions, "Retry failed", self._retry_failed,
+                                             style="Small.TButton")
+            self.retry_button.pack(side="left", padx=1)
+            self.clear_button = self._button(bulk_actions, "Clear finished", self._clear_finished,
+                                             style="Small.TButton")
+            self.clear_button.pack(side="left", padx=1)
+
+            table_wrap = ttk.Frame(queue_panel, style="CardInner.TFrame")
+            table_wrap.grid(row=1, column=0, sticky="nsew", pady=(7, 0))
             table_wrap.grid_rowconfigure(0, weight=1)
             table_wrap.grid_columnconfigure(0, weight=1)
-
             columns = ("num", "name", "progress", "done", "speed", "eta", "status")
+            self._heading_labels = {
+                "num": "NO.", "name": "FILE", "progress": "PROGRESS", "done": "SIZE",
+                "speed": "SPEED", "eta": "ETA", "status": "STATUS",
+            }
             self.tree = ttk.Treeview(table_wrap, columns=columns, show="headings",
                                      selectmode="extended")
-            headings = {
-                "num": "#", "name": "File", "progress": "Progress", "done": "Size",
-                "speed": "Speed", "eta": "ETA", "status": "Status",
-            }
-            widths = {"num": 42, "name": 300, "progress": 190, "done": 150, "speed": 100,
-                      "eta": 74, "status": 220}
-            anchors = {"num": "center", "progress": "w", "done": "e", "speed": "e", "eta": "e"}
+            self._set_pointer_cursor(self.tree)
+            widths = {"num": 43, "name": 250, "progress": 174, "done": 118,
+                      "speed": 102, "eta": 78, "status": 160}
+            minimums = {"num": 36, "name": 145, "progress": 135, "done": 86,
+                        "speed": 75, "eta": 62, "status": 105}
+            anchors = {"num": "center", "progress": "w", "done": "e", "speed": "e",
+                       "eta": "e"}
             for column in columns:
-                self.tree.heading(column, text=headings[column])
-                self.tree.column(column, width=widths[column], anchor=anchors.get(column, "w"),
-                                 stretch=column in ("name", "status"))
+                self.tree.heading(
+                    column, text=self._heading_labels[column],
+                    command=lambda selected=column: self._sort_by(selected),
+                )
+                self.tree.column(
+                    column, width=widths[column], minwidth=minimums[column],
+                    anchor=anchors.get(column, "w"), stretch=column in ("name", "status"),
+                )
             self.tree.grid(row=0, column=0, sticky="nsew")
-            tree_scroll = ttk.Scrollbar(table_wrap, orient="vertical", command=self.tree.yview)
-            tree_scroll.grid(row=0, column=1, sticky="ns")
-            self.tree.configure(yscrollcommand=tree_scroll.set)
-            for state, color in STATE_COLORS.items():
+            tree_scroll = ttk.Scrollbar(table_wrap, orient="vertical", command=self.tree.yview,
+                                        style="Vertical.TScrollbar")
+            tree_scroll.grid(row=0, column=1, rowspan=2, sticky="ns")
+            horizontal_scroll = ttk.Scrollbar(
+                table_wrap, orient="horizontal", command=self.tree.xview,
+                style="Horizontal.TScrollbar",
+            )
+            horizontal_scroll.grid(row=1, column=0, sticky="ew")
+            self.tree.configure(yscrollcommand=tree_scroll.set,
+                                xscrollcommand=horizontal_scroll.set)
+            for state, color in self._state_colors.items():
                 self.tree.tag_configure(state, foreground=color)
 
             self.tree.bind("<Double-1>", self._on_double_click)
             self.tree.bind("<Button-3>", self._on_right_click)
             self.tree.bind("<Button-2>", self._on_right_click)
             self.tree.bind("<Delete>", lambda _event: self._remove_selected())
+            self.tree.bind("<Return>", lambda _event: self._open_selected())
+            self.tree.bind("<<TreeviewSelect>>", lambda _event: self._update_details())
 
-            # -- log -------------------------------------------------------- #
-            log_wrap = ttk.Frame(self, style="TFrame")
-            log_wrap.grid(row=3, column=0, sticky="nsew", padx=16, pady=(0, 6))
-            log_wrap.grid_rowconfigure(0, weight=1)
-            log_wrap.grid_columnconfigure(0, weight=1)
-            self.notebook = ttk.Notebook(log_wrap)
+            self.empty_state = ttk.Frame(table_wrap, style="Empty.TFrame", padding=(16, 10))
+            ttk.Label(self.empty_state, text="Your queue is clear",
+                      style="EmptyTitle.TLabel").pack()
+            ttk.Label(self.empty_state,
+                      text="Add a link above and your downloads will appear here.",
+                      style="EmptyCopy.TLabel").pack(pady=(3, 0))
+            self._show_empty_queue(True)
+
+            # -- activity and selected-download details -------------------- #
+            activity = ttk.Frame(self, style="Card.TFrame", padding=(9, 5))
+            activity.grid(row=5, column=0, sticky="nsew", padx=18, pady=5)
+            activity.grid_columnconfigure(0, weight=1)
+            activity.grid_rowconfigure(0, weight=1)
+            self.notebook = ttk.Notebook(activity)
             self.notebook.grid(row=0, column=0, sticky="nsew")
 
-            log_tab = ttk.Frame(self.notebook, style="TFrame")
+            log_tab = ttk.Frame(self.notebook, style="CardInner.TFrame")
             log_tab.grid_rowconfigure(0, weight=1)
             log_tab.grid_columnconfigure(0, weight=1)
-            self.log_text = tk.Text(log_tab, height=7, bg=PANEL, fg=FG, relief="flat",
-                                    highlightthickness=0, wrap="word",
-                                    font=(self._mono_font(), 9), padx=8, pady=6)
+            self.log_text = tk.Text(
+                log_tab, height=5, bg=c["card"], fg=c["text"],
+                insertbackground=c["text"], selectbackground=c["selection"],
+                selectforeground=c["text"], relief="flat", highlightthickness=0,
+                wrap="word", font=(self._mono_font(), 9), padx=10, pady=7,
+                cursor="xterm",
+            )
             self.log_text.grid(row=0, column=0, sticky="nsew")
-            log_scroll = ttk.Scrollbar(log_tab, orient="vertical", command=self.log_text.yview)
+            log_scroll = ttk.Scrollbar(log_tab, orient="vertical", command=self.log_text.yview,
+                                       style="Vertical.TScrollbar")
             log_scroll.grid(row=0, column=1, sticky="ns")
             self.log_text.configure(yscrollcommand=log_scroll.set, state="disabled")
             self.notebook.add(log_tab, text="Activity")
 
-            info_tab = ttk.Frame(self.notebook, style="TFrame")
-            info_tab.grid_rowconfigure(1, weight=1)
+            info_tab = ttk.Frame(self.notebook, style="CardInner.TFrame")
+            info_tab.grid_rowconfigure(0, weight=1)
             info_tab.grid_columnconfigure(0, weight=1)
             self.detail_var = tk.StringVar(value="Select a download to see its details.")
-            ttk.Label(info_tab, textvariable=self.detail_var, justify="left",
-                      font=(self._mono_font(), 10)).grid(row=0, column=0, sticky="nw",
-                                                         padx=12, pady=10)
+            ttk.Label(info_tab, textvariable=self.detail_var, justify="left", anchor="nw",
+                      wraplength=1000, font=(self._mono_font(), 9),
+                      style="Card.TLabel").grid(row=0, column=0, sticky="nsew",
+                                                padx=12, pady=10)
             self.notebook.add(info_tab, text="Details")
-            self.tree.bind("<<TreeviewSelect>>", lambda _event: self._update_details())
+
+            # -- quiet, useful footer -------------------------------------- #
+            footer = ttk.Frame(self, style="App.TFrame")
+            footer.grid(row=6, column=0, sticky="ew", padx=19, pady=(1, 8))
+            footer.grid_columnconfigure(0, weight=1)
+            ttk.Label(footer, text="Tip: double-click a completed item to open it  ·  "
+                      "Right-click a download for more actions.",
+                      style="Footer.TLabel").grid(row=0, column=0, sticky="w")
+            ttk.Label(footer, text="v%s" % __version__, style="Footer.TLabel").grid(
+                row=0, column=1, sticky="e")
 
             self._build_context_menu()
 
+        def _button(self, parent, text: str, command, style: str = "TButton", **kwargs):
+            """Create a keyboard-focusable button with a platform pointer cursor."""
+            options = dict(text=text, command=command, style=style, takefocus=True)
+            options.update(kwargs)
+            for cursor in (self._hand_cursor, "hand2", "pointinghand"):
+                try:
+                    return ttk.Button(parent, cursor=cursor, **options)
+                except tk.TclError:
+                    continue
+            return ttk.Button(parent, **options)
+
+        def _set_pointer_cursor(self, widget) -> None:
+            for cursor in (self._hand_cursor, "hand2", "pointinghand"):
+                try:
+                    widget.configure(cursor=cursor)
+                    return
+                except tk.TclError:
+                    continue
+
+        def _show_empty_queue(self, visible: bool) -> None:
+            if self._empty_state_visible == visible:
+                return
+            self._empty_state_visible = visible
+            if visible:
+                self.empty_state.place(relx=0.5, rely=0.5, anchor="center")
+            else:
+                self.empty_state.place_forget()
+
+        def _bind_shortcuts(self) -> None:
+            mod = self._modifier
+            self.bind_all("<%s-o>" % mod, self._shortcut_add_from_file)
+            self.bind_all("<%s-Shift-o>" % mod, self._shortcut_curl_import)
+            self.bind_all("<%s-Return>" % mod, self._shortcut_add)
+            self.bind_all("<%s-Shift-Return>" % mod, self._shortcut_start)
+            self.bind_all("<F5>", self._shortcut_start)
+            self.bind_all("<%s-q>" % mod, self._shortcut_quit)
+
+        def _shortcut_add_from_file(self, _event=None):
+            self._add_from_file()
+            return "break"
+
+        def _shortcut_curl_import(self, _event=None):
+            self._open_curl_dialog()
+            return "break"
+
+        def _shortcut_add(self, _event=None):
+            self._add_urls()
+            return "break"
+
+        def _shortcut_start(self, _event=None):
+            self._start()
+            return "break"
+
+        def _shortcut_quit(self, _event=None):
+            self._on_close()
+            return "break"
+
+        def _toggle_theme(self) -> None:
+            self.theme_name = "dark" if self.theme_name == "light" else "light"
+            self.colors = dict(THEMES[self.theme_name])
+            self._build_style()
+            self.configure(bg=self.colors["bg"])
+            self.theme_button.configure(
+                text="%s theme" % ("Dark" if self.theme_name == "light" else "Light"))
+            self.url_text.configure(
+                bg=self.colors["field"], fg=self.colors["text"],
+                insertbackground=self.colors["text"],
+                selectbackground=self.colors["selection"],
+                selectforeground=self.colors["text"],
+                highlightbackground=self.colors["border"],
+                highlightcolor=self.colors["accent"],
+            )
+            self.log_text.configure(
+                bg=self.colors["card"], fg=self.colors["text"],
+                insertbackground=self.colors["text"],
+                selectbackground=self.colors["selection"],
+                selectforeground=self.colors["text"],
+            )
+            for state, color in self._state_colors.items():
+                self.tree.tag_configure(state, foreground=color)
+            for menu in self._menus:
+                try:
+                    menu.configure(**self._menu_options())
+                except tk.TclError:
+                    pass
+            self._log("Switched to %s appearance." % self.theme_name)
+
         def _build_context_menu(self) -> None:
-            self.context_menu = tk.Menu(self, tearoff=0)
+            self.context_menu = self._make_menu(self)
             self.context_menu.add_command(label="Pause", command=self._pause_selected)
             self.context_menu.add_command(label="Resume", command=self._resume_selected)
             self.context_menu.add_command(label="Cancel", command=self._cancel_selected)
@@ -386,6 +750,61 @@ def app_class():
             self.context_menu.add_command(label="Copy URL", command=self._copy_selected_url)
             self.context_menu.add_separator()
             self.context_menu.add_command(label="Remove from list", command=self._remove_selected)
+
+        def _sort_by(self, column: str) -> None:
+            """Sort the visible queue by the selected heading."""
+            if self._sort_column == column:
+                self._sort_reverse = not self._sort_reverse
+            else:
+                self._sort_column = column
+                self._sort_reverse = False
+            self._update_sort_headings()
+            self._sort_rows()
+
+        def _sort_key(self, task_id: int, column: str):
+            state = self._progress_by_id.get(task_id)
+            if state is None:
+                return (1, task_id)
+            if column == "num":
+                value = state.id
+            elif column == "name":
+                value = state.name.casefold()
+            elif column == "progress":
+                value = (state.total <= 0, state.percent if state.percent >= 0 else -1)
+            elif column == "done":
+                value = state.downloaded
+            elif column == "speed":
+                value = state.speed
+            elif column == "eta":
+                value = (state.eta is None, state.eta or 0)
+            elif column == "status":
+                order = {RUNNING: 0, PENDING: 1, PAUSED: 2, ERROR: 3,
+                         CANCELLED: 4, DONE: 5}
+                value = (order.get(state.state, 9), state.state)
+            else:
+                value = state.id
+            return (0, value, state.id)
+
+        def _sort_rows(self) -> None:
+            if not self._sort_column:
+                return
+            rows = []
+            for row in self.tree.get_children(""):
+                try:
+                    task_id = int(row)
+                except (TypeError, ValueError):
+                    continue
+                rows.append((self._sort_key(task_id, self._sort_column), row))
+            rows.sort(key=lambda item: item[0], reverse=self._sort_reverse)
+            for index, (_key, row) in enumerate(rows):
+                self.tree.move(row, "", index)
+
+        def _update_sort_headings(self) -> None:
+            for column, label in self._heading_labels.items():
+                marker = "  %s" % ("▼" if self._sort_reverse else "▲") \
+                    if column == self._sort_column else ""
+                self.tree.heading(column, text=label + marker,
+                                 command=lambda selected=column: self._sort_by(selected))
 
         # ------------------------------------------------------------------ #
         # helpers
@@ -414,13 +833,17 @@ def app_class():
             self.manager.outdir = os.path.abspath(os.path.expanduser(
                 self.dir_var.get().strip() or default_download_dir()))
             try:
-                self.manager.connections = max(1, int(float(self.conn_var.get())))
-            except ValueError:
-                self.manager.connections = 4
+                connections = int(float(self.conn_var.get()))
+            except (TypeError, ValueError, OverflowError):
+                connections = 4
             try:
-                self.manager.jobs = max(1, int(float(self.jobs_var.get())))
-            except ValueError:
-                self.manager.jobs = 2
+                jobs = int(float(self.jobs_var.get()))
+            except (TypeError, ValueError, OverflowError):
+                jobs = 2
+            self.manager.connections = min(32, max(1, connections))
+            self.manager.jobs = min(16, max(1, jobs))
+            self.conn_var.set(str(self.manager.connections))
+            self.jobs_var.set(str(self.manager.jobs))
             self.dir_var.set(self.manager.outdir)
 
         # ------------------------------------------------------------------ #
@@ -428,9 +851,25 @@ def app_class():
         # ------------------------------------------------------------------ #
 
         def _browse_dir(self) -> None:
-            chosen = filedialog.askdirectory(initialdir=self.dir_var.get() or os.path.expanduser("~"))
+            initialdir = self.dir_var.get() or os.path.expanduser("~")
+            chosen = filedialog.askdirectory(initialdir=initialdir)
             if chosen:
                 self.dir_var.set(chosen)
+                self.dir_entry.focus_set()
+
+        def _paste_urls(self) -> None:
+            try:
+                contents = self.clipboard_get()
+            except tk.TclError:
+                self._log("Clipboard is empty or does not contain text.")
+                self.url_text.focus_set()
+                return
+            if not contents.strip():
+                self._log("Clipboard is empty — copy a download link first.")
+                self.url_text.focus_set()
+                return
+            self.url_text.insert("insert", contents.strip() + "\n")
+            self.url_text.focus_set()
 
         def _add_from_file(self) -> None:
             path = filedialog.askopenfilename(
@@ -471,6 +910,8 @@ def app_class():
                 self._log("Queued %d URL(s) in %s" % (accepted, self.manager.outdir))
             for problem in rejected:
                 self._log("Skipped: %s" % problem)
+            if accepted:
+                self._refresh()
 
         def _start(self) -> None:
             self._apply_settings()
@@ -479,19 +920,27 @@ def app_class():
             if not self.manager.tasks:
                 messagebox.showinfo("smalldownloader", "Add at least one URL first.")
                 return
-            os.makedirs(self.manager.outdir, exist_ok=True)
+            try:
+                os.makedirs(self.manager.outdir, exist_ok=True)
+            except OSError as exc:
+                messagebox.showerror(
+                    "smalldownloader", "Cannot create the download folder:\n%s" % exc)
+                return
             self.manager.start()
             self._log("Starting: %d connection(s) per file, %d file(s) at a time." % (
                 self.manager.connections, self.manager.jobs))
+            self._refresh()
 
         def _pause(self) -> None:
             self.manager.pause_all()
-            self._log("Pausing - partial files are kept and can be resumed.")
+            self._log("Pausing — partial files are kept and can be resumed.")
+            self._refresh()
 
         def _resume(self) -> None:
             self._apply_settings()
             self.manager.resume_all()
             self._log("Resuming…")
+            self._refresh()
 
         def _cancel(self) -> None:
             if messagebox.askyesno(
@@ -500,6 +949,7 @@ def app_class():
             ):
                 self.manager.cancel_all()
                 self._log("Cancelling…")
+                self._refresh()
 
         def _retry_failed(self) -> None:
             failed = [task for task in self.manager.tasks if task.state in (ERROR, CANCELLED)]
@@ -510,38 +960,48 @@ def app_class():
                 task.reset()
             self.manager.start()
             self._log("Retrying %d download(s)…" % len(failed))
+            self._refresh()
 
         def _clear_finished(self) -> None:
             self.manager.clear_finished()
-            for task_id in list(self._rows):
-                if self._task(task_id) is None:
-                    self.tree.delete(self._rows.pop(task_id))
-                    self._last_state.pop(task_id, None)
             self._log("Removed finished downloads from the list.")
+            self._refresh()
 
         # -- per-selection actions ----------------------------------------- #
 
         def _pause_selected(self) -> None:
-            for task in self._selected_tasks():
+            selected = self._selected_tasks()
+            for task in selected:
                 if task.is_active:
                     task.pause()
-            self._log("Paused %d selected download(s)." % len(self.tree.selection()))
+            self._log("Paused %d selected download(s)." % len(selected))
+            self._refresh()
 
         def _resume_selected(self) -> None:
-            for task in self._selected_tasks():
+            selected = self._selected_tasks()
+            for task in selected:
                 if task.state in (PAUSED, CANCELLED, ERROR):
                     task.reset()
-            self.manager.start()
+            if selected:
+                self.manager.start()
+                self._log("Resuming %d selected download(s)…" % len(selected))
+            self._refresh()
 
         def _cancel_selected(self) -> None:
-            for task in self._selected_tasks():
+            selected = self._selected_tasks()
+            for task in selected:
                 task.cancel()
-            self._log("Cancelled %d selected download(s)." % len(self.tree.selection()))
+            self._log("Cancelled %d selected download(s)." % len(selected))
+            self._refresh()
 
         def _retry_selected(self) -> None:
-            for task in self._selected_tasks():
-                task.reset()
-            self.manager.start()
+            selected = self._selected_tasks()
+            for task in selected:
+                if task.state in (PAUSED, CANCELLED, ERROR, DONE):
+                    task.reset()
+            if selected:
+                self.manager.start()
+            self._refresh()
 
         def _remove_selected(self) -> None:
             for task in self._selected_tasks():
@@ -550,6 +1010,7 @@ def app_class():
                 if row:
                     self.tree.delete(row)
                 self._last_state.pop(task.id, None)
+            self._refresh()
 
         def _open_selected(self) -> None:
             for task in self._selected_tasks():
@@ -595,25 +1056,38 @@ def app_class():
         # -- cURL import ---------------------------------------------------- #
 
         def _open_curl_dialog(self) -> None:
+            c = self.colors
             dialog = tk.Toplevel(self)
             dialog.title("Import from browser cURL")
-            dialog.geometry("720x460")
-            dialog.configure(bg=BG)
+            dialog.geometry("760x480")
+            dialog.minsize(560, 390)
+            dialog.configure(bg=c["bg"])
             dialog.transient(self)
             dialog.grab_set()
 
-            ttk.Label(dialog, text="Paste 'Copy as cURL' from your browser's DevTools:",
-                      style="TLabel").pack(anchor="w", padx=14, pady=(12, 6))
-            text = tk.Text(dialog, bg=PANEL_2, fg=FG, insertbackground=FG, relief="flat",
-                           highlightthickness=1, highlightbackground=BORDER, wrap="word",
-                           font=(self._mono_font(), 9), padx=8, pady=6)
-            text.pack(fill="both", expand=True, padx=14, pady=(0, 10))
-            hint = ttk.Label(dialog, text="Headers, cookies and POST bodies are reused as-is.",
-                             style="Muted.TLabel")
-            hint.pack(anchor="w", padx=14)
+            shell = ttk.Frame(dialog, style="App.TFrame", padding=16)
+            shell.pack(fill="both", expand=True)
+            ttk.Label(shell, text="Import a browser request", style="Head.TLabel").pack(
+                anchor="w")
+            ttk.Label(shell, text="Paste “Copy as cURL” from your browser’s DevTools.",
+                      style="Subhead.TLabel").pack(anchor="w", pady=(2, 10))
+            text = tk.Text(
+                shell, bg=c["field"], fg=c["text"], insertbackground=c["text"],
+                selectbackground=c["selection"], selectforeground=c["text"], relief="flat",
+                highlightthickness=1, highlightbackground=c["border"],
+                highlightcolor=c["accent"], wrap="word", font=(self._mono_font(), 9),
+                padx=10, pady=8, cursor="xterm",
+            )
+            text.pack(fill="both", expand=True, pady=(0, 9))
+            ttk.Label(
+                shell,
+                text=("Headers, cookies, and POST bodies are applied to this session "
+                      "and its queued links."),
+                style="Muted.TLabel",
+            ).pack(anchor="w")
 
-            buttons = ttk.Frame(dialog, style="TFrame")
-            buttons.pack(fill="x", padx=14, pady=12)
+            buttons = ttk.Frame(shell, style="App.TFrame")
+            buttons.pack(fill="x", pady=(12, 0))
 
             def apply() -> None:
                 parsed = parse_curl(text.get("1.0", "end-1c"))
@@ -630,13 +1104,16 @@ def app_class():
                         task.post_data = self.manager.post_data
                 self.url_text.delete("1.0", "end")
                 self.url_text.insert("1.0", parsed.url + "\n")
+                self.url_text.focus_set()
                 self._log("cURL imported: %d header(s), method %s." % (
                     len(parsed.headers), parsed.method or "GET"))
                 dialog.destroy()
 
-            ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right")
-            ttk.Button(buttons, text="Use this session", style="Accent.TButton",
-                       command=apply).pack(side="right", padx=8)
+            self._button(buttons, "Cancel", command=dialog.destroy,
+                         style="Quiet.TButton").pack(side="right")
+            self._button(buttons, "Use this request", command=apply,
+                         style="Primary.TButton").pack(side="right", padx=(0, 6))
+            text.focus_set()
 
         # -- about ---------------------------------------------------------- #
 
@@ -645,7 +1122,8 @@ def app_class():
                 "About smalldownloader",
                 "smalldownloader %s\n\n"
                 "A tiny, dependency-free downloader.\n"
-                "Multi-connection, resumable, terminal + GUI.\n\n"
+                "Multi-connection, resumable, terminal + GUI.\n"
+                "The desktop UI includes light and dark appearances.\n\n"
                 "Partial files are stored as '<name>.smlpart' plus a '<name>.smlpart.json'\n"
                 "progress file; rerunning the same URL resumes automatically." % __version__,
             )
@@ -665,6 +1143,7 @@ def app_class():
 
         def _refresh(self) -> None:
             states = self.manager.progress()
+            self._progress_by_id = {state.id: state for state in states}
             seen = set()
             for index, state in enumerate(states, 1):
                 seen.add(state.id)
@@ -681,25 +1160,39 @@ def app_class():
                 if task_id not in seen:
                     self.tree.delete(self._rows.pop(task_id))
                     self._last_state.pop(task_id, None)
+            self._show_empty_queue(not states)
+            self._sort_rows()
 
             counts = self.manager.counts()
             speed = self.manager.total_speed
-            parts = []
+            self.queue_count_var.set("%d download%s" % (
+                len(states), "" if len(states) == 1 else "s"))
+            self.stat_vars["active"].set(str(counts[RUNNING]))
+            self.stat_vars["queued"].set(str(counts[PENDING] + counts[PAUSED]))
+            self.stat_vars["completed"].set(str(counts[DONE]))
+            self.stat_vars["speed"].set("%s/s" % human_bytes(speed) if speed > 1 else "0 B/s")
+
             if counts[RUNNING]:
-                parts.append("%d running" % counts[RUNNING])
-            if counts[PENDING]:
-                parts.append("%d queued" % counts[PENDING])
-            if counts[PAUSED]:
-                parts.append("%d paused" % counts[PAUSED])
-            if counts[DONE]:
-                parts.append("%d done" % counts[DONE])
-            if counts[ERROR]:
-                parts.append("%d failed" % counts[ERROR])
-            if counts[CANCELLED]:
-                parts.append("%d cancelled" % counts[CANCELLED])
-            if speed > 1:
-                parts.append("%s/s" % human_bytes(speed))
-            self.status_label.configure(text="  ·  ".join(parts) if parts else "idle")
+                status, status_style = "●  Downloading", "ActiveStatus.TLabel"
+            elif counts[ERROR]:
+                status, status_style = "●  Attention needed", "ErrorStatus.TLabel"
+            elif counts[PAUSED]:
+                status, status_style = "●  Paused", "WarningStatus.TLabel"
+            elif counts[PENDING]:
+                status, status_style = "●  Ready to start", "ActiveStatus.TLabel"
+            else:
+                status, status_style = "●  Ready", "Ready.TLabel"
+            self.status_label.configure(text=status, style=status_style)
+
+            active = counts[RUNNING] + counts[PENDING]
+            retryable = counts[ERROR] + counts[CANCELLED]
+            finished = counts[DONE] + retryable
+            self.pause_button.configure(state="normal" if active else "disabled")
+            self.resume_button.configure(
+                state="normal" if counts[PAUSED] or counts[PENDING] else "disabled")
+            self.cancel_button.configure(state="normal" if active else "disabled")
+            self.retry_button.configure(state="normal" if retryable else "disabled")
+            self.clear_button.configure(state="normal" if finished else "disabled")
             self._update_details()
 
         def _row_values(self, index: int, state: Progress) -> tuple:
@@ -709,20 +1202,22 @@ def app_class():
                 amount = "%s / %s" % (human_bytes(state.downloaded), human_bytes(state.total))
             else:
                 fraction = 0.0
-                percent = "  ? "
+                percent = " --"
                 amount = human_bytes(state.downloaded)
             if state.state == DONE:
                 fraction = 1.0
-            width = 22
+                percent = "100%"
+            width = 10
             filled = int(round(max(0.0, min(1.0, fraction)) * width))
-            bar = "█" * filled + "░" * (width - filled)
+            bar = "■" * filled + "·" * (width - filled)
             if state.state == ERROR:
                 bar = "—" * width
             speed = ("%s/s" % human_bytes(state.speed)) if state.speed > 1 else "-"
-            eta = human_time(state.eta) if state.eta else "-"
+            eta = human_time(state.eta) if state.eta is not None else "-"
             label = STATE_LABELS.get(state.state, state.state)
             if state.state == ERROR and state.error:
-                label = "error: %s" % state.error
+                detail = " ".join(str(state.error).split())
+                label = "failed · %s" % (detail[:34] + ("…" if len(detail) > 34 else ""))
             return (index, state.name, "%s %s" % (bar, percent), amount, speed, eta, label)
 
         def _log_transition(self, state: Progress) -> None:
@@ -754,7 +1249,12 @@ def app_class():
         def _update_details_for(self, tasks: List[object]) -> None:
             if len(tasks) != 1:
                 if len(tasks) > 1:
-                    self.detail_var.set("%d downloads selected." % len(tasks))
+                    self.detail_var.set(
+                        "%d downloads selected. Select one item to inspect its details."
+                        % len(tasks))
+                else:
+                    self.detail_var.set(
+                        "Select a download to see its URL, progress, and save location.")
                 return
             task = tasks[0]
             state = task.progress()
@@ -788,7 +1288,7 @@ def app_class():
             if active:
                 keep = messagebox.askyesno(
                     "smalldownloader",
-                    "%d download(s) are still running.\n\n"
+                    "%d download(s) are active or waiting.\n\n"
                     "Quit anyway? Partial files are kept, so you can resume later." % len(active),
                 )
                 if not keep:

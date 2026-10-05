@@ -162,30 +162,37 @@ python -m smalldownloader gui          # or double-click smalldownloader.pyw
 python -m smalldownloader gui -o ~/Downloads https://example.com/big.iso
 ```
 
-Layout sketch (the real window is tidier than ASCII can show):
+The window uses the host operating system's normal title bar and menus, with a
+custom, native-font dashboard inside. It opens in a clean light appearance; use
+**Dark theme** in the header (or **View → Toggle light / dark appearance**) to
+switch whenever you like.
 
 ```
-┌ smalldownloader ─────────────────────────────────────── 2 running · 41.2 MB/s ┐
-│ Save to [ ~/Downloads               ] [Browse…]  Connections [8]  Files [2]    │
-├────────────────────────────────────────────────────────────────────────────────┤
-│ [ paste links here, one per line… ]                    [Add to queue][cURL…]   │
-│ [Start] [Pause] [Resume] [Cancel]        [Retry failed] [Remove finished]      │
-├────────────────────────────────────────────────────────────────────────────────┤
-│ #  File                        Progress              Size        Speed  Status │
-│ 1  ubuntu-24.04.iso            ████████████░░░░ 61%   3.7/6.1 GB  11.4 MB/s ⋯ │
-│ 2  report.pdf                  ████████████████ 100%  4.2/4.2 MB  -       done │
-│ 3  dataset.tar.gz              ░░░░░░░░░░░░░░░░   ?    0 B         -     queued│
-├────────────────────────────────────────────────────────────────────────────────┤
-│ Activity | Details        ✔ ubuntu-mini.iso → ~/Downloads/ubuntu-mini.iso      │
-└────────────────────────────────────────────────────────────────────────────────┘
+┌ S  smalldownloader · Reliable downloads, made simple.        ● Ready  Dark ┐
+│ DOWNLOADING  2   WAITING  1   COMPLETED  4   TRANSFER RATE  41.2 MB/s       │
+│ SAVE TO [ ~/Downloads                   ] [Browse]  Connections  Files      │
+├ Add downloads ──────────────────────────────────────────── [Import cURL…] ┤
+│ Paste direct links — one per line…                                       │
+│ Ctrl+Enter to add                    [Paste] [Add to queue] [Start downloads] │
+├ Download queue  7 downloads       Pause  Resume  Retry  Clear finished ────┤
+│ NO.  FILE                    PROGRESS       SIZE        SPEED      ETA     │
+│ 1    ubuntu-24.04.iso        ■■■■■■···· 61%  3.7/6.1 GB  11.4 MB/s  2:14   │
+│ 2    report.pdf              ■■■■■■■■■■100%  4.2 MB     -          -       │
+├ Activity | Details ─────────────────────────────────────────────────────────┤
+│ ✔ report.pdf → ~/Downloads/report.pdf                                     │
+└ Tip: double-click to open · right-click for more actions             v1.0.0 ┘
 ```
 
 Everything the window does goes through the same `DownloadManager` as the terminal,
-so behaviour (segmentation, resume, retries, file naming) is identical. The table
-updates 3× per second; use the right-click menu for per-download actions, and
-"Import from browser cURL" to paste DevTools' *Copy as cURL* when a URL needs a
-session (headers, cookies and POST bodies are reused; `^`, `\` and backtick line
-continuations are all understood, so snippets copied on Windows work too).
+so behaviour (segmentation, resume, retries, file naming) is identical. The queue
+refreshes three times per second; click a column heading to sort, use the right-click
+menu for per-download actions, or use **Import cURL** to paste DevTools' *Copy as
+cURL* when a URL needs a session (headers, cookies and POST bodies are reused;
+`^`, `\` and backtick line continuations are understood, so snippets copied on
+Windows work too). Buttons use a platform pointer cursor, forms remain keyboard
+focusable, and common actions have shortcuts: `Ctrl+O` imports a URL file,
+`Ctrl+Enter` queues pasted links, `Ctrl+Shift+Enter` or `F5` starts, and `Ctrl+Q`
+quits (`⌘` equivalents are used on macOS).
 
 Tkinter is part of the python.org builds on Windows/macOS. On Linux install it
 once:
