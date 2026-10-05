@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smalldownloader"
+version = "1.0.0"
+description = "A tiny downloader with a terminal and a GUI: multi-connection, resumable, zero dependencies"
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["download", "downloader", "aria2", "cli", "terminal", "gui", "tkinter", "resume", "curl"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Environment :: X11 Applications",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Utilities",
+]
+# deliberately empty: smalldownloader is standard library only
+dependencies = []
+
+[project.optional-dependencies]
+test = []
+
+[project.scripts]
+smalldownloader = "smalldownloader.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/AfzalAshraf/smlDownload"
+
+[tool.setuptools]
+packages = ["smalldownloader"]
