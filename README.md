@@ -7,9 +7,38 @@ retries dropped connections, and needs **nothing but the Python standard library
 no `pip install`, no `aria2c` binary, no 20 MB dependency tree.
 
 ```
-python -m smalldownloader https://example.com/big.iso -o ~/Downloads -n 8
-python -m smalldownloader gui
+python smalldownloader.py https://example.com/big.iso -o ~/Downloads -n 8
+python smalldownloader.py                          # opens the window
 ```
+
+---
+
+## No install: one file, any machine
+
+**[`smalldownloader.py`](smalldownloader.py) is the whole program in one file** -
+~2.8k lines, no package folder, no `pip`, no build step. Download that single file
+and run it:
+
+```bash
+# 1. get the file (download it from GitHub, or copy it over on a USB stick)
+curl -O https://raw.githubusercontent.com/AfzalAshraf/smlDownload/main/smalldownloader.py
+
+# 2. run it - nothing else to do
+python smalldownloader.py https://example.com/big.iso -o ~/Downloads -n 8
+python smalldownloader.py                          # window
+python smalldownloader.py --dry-run https://example.com/big.iso
+```
+
+Requirements: **Python 3.8 or newer, and that is all.** No admin rights, no
+virtualenv, no internet access at install time. It works exactly the same on
+Windows, Linux and macOS, and the same file can be renamed to
+`smalldownloader.pyw` so a double-click opens the window without a console.
+
+If the file has no arguments it opens the window; if Tkinter is missing it prints
+how to get it and keeps working in the terminal. The package below is the source
+of truth - the single file is generated from it with
+`python tools/build_single_file.py`, and the test-suite fails if someone forgets
+to regenerate, so the two can never drift apart.
 
 ---
 
@@ -22,7 +51,7 @@ python -m smalldownloader gui
 | Setup | copy the folder and run it (or `pip install .` for a `smalldownloader` command) |
 | Platforms | Windows, Linux, macOS (Python 3.8+) |
 
-The old `aria2.pyw` in this repository is untouched - `smalldownloader/` is a
+The old `aria2.pyw` in this repository is untouched - `smalldownloader` is a
 separate, self-contained app that does not shell out to `aria2c`.
 
 ## Features
@@ -170,20 +199,26 @@ The terminal mode has no such requirement.
 
 ## Install
 
-Nothing to install - run it from the checkout:
+**Usually: don't.** Copy [`smalldownloader.py`](smalldownloader.py) anywhere and run
+it (see above). The rest of this section is for the repository checkout and for
+people who prefer a command on their `PATH`.
+
+From the checkout:
 
 ```bash
 python -m smalldownloader --help
 ```
 
-or make it a command:
+As a command, if you want one:
 
 ```bash
 pip install .          # adds the `smalldownloader` command
 pipx install .         # isolated, if you prefer
 ```
 
-On Windows, `smalldownloader.pyw` starts the GUI without a console window.
+On Windows, `smalldownloader.pyw` starts the GUI without a console window: it
+loads `smalldownloader.py` when it sits next to it, and otherwise falls back to the
+package.
 
 ## Use it as a library
 
@@ -212,7 +247,7 @@ manager.stop(pause=True)        # stop the scheduler, keep partial files
 
 ## Tests
 
-62 tests, no network access required - they run against a local HTTP server that
+71 tests, no network access required - they run against a local HTTP server that
 pretends to be a hostile host (no range support, chunked bodies, dropped
 connections, redirects, `Content-Disposition` oddities, 403/404, faked
 multi-gigabyte sizes):
@@ -230,12 +265,18 @@ files, cookies, quiet mode), the live ANSI dashboard inside a pty including the
 `q` key, and the GUI logic (window construction, table rendering, transitions,
 cURL import) against a fake Tk.
 
+The single-file edition has its own tests: it must be up to date with the
+package, contain no package imports, run with an empty `PYTHONPATH` from a
+throwaway folder, download byte-identical data, survive SIGTERM and resume, and
+open the window when started with no arguments (using a stub Tkinter).
+
 The engine was also checked against a real CDN: an 11.1 MB wheel downloaded from
 `files.pythonhosted.org` over 8 connections matched the sha256 published by PyPI.
 
 ## Layout
 
 ```
+smalldownloader.py    the single-file edition: copy this anywhere and run it
 smalldownloader/
 ├── __init__.py       public API re-exports
 ├── core.py           engine: probing, ranges, segments, retries, resume, queue
@@ -244,6 +285,7 @@ smalldownloader/
 ├── gui.py            Tkinter front-end
 └── __main__.py       python -m smalldownloader
 smalldownloader.pyw   double-click launcher for the GUI (Windows)
+tools/                build_single_file.py (package -> single file)
 tests/                local fake HTTP server + unittest suite
 aria2.pyw             the original standalone aria2 GUI script (unchanged)
 ```

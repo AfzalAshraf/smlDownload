@@ -142,6 +142,21 @@ STATE_ORDER = {RUNNING: 0, PENDING: 1, PAUSED: 2, ERROR: 3, CANCELLED: 4, DONE: 
 # --------------------------------------------------------------------------- #
 
 
+def resolve_run_gui():
+    """Return the GUI entry point, importing it only when it is needed.
+
+    Written for both worlds: as a package it imports ``smalldownloader.gui``
+    lazily (so Tkinter is not required for terminal use), and inside the
+    generated single-file build every module shares one namespace, so the
+    function is already in :func:`globals`.
+    """
+    if __package__:
+        from importlib import import_module
+
+        return import_module(".gui", __package__).run_gui
+    return globals()["run_gui"]
+
+
 class KeyReader:
     """Non-blocking single-key reads; silently does nothing when unsupported."""
 
@@ -526,7 +541,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if raw and raw[0].lower() in ("gui", "window", "app"):
         gui_args = build_gui_parser().parse_args(raw[1:])
         try:
-            from .gui import run_gui
+            run_gui = resolve_run_gui()
         except ImportError as exc:
             print("smalldownloader: the GUI needs Tkinter (%s)." % exc, file=sys.stderr)
             print("  Debian/Ubuntu : sudo apt install python3-tk", file=sys.stderr)
