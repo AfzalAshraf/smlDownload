@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.venv/
+venv/
+
+# smalldownloader partial downloads (only appear if you download into the repo)
+*.smlpart
+*.smlpart.json.tmp
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
